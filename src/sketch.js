@@ -153,7 +153,7 @@ function drawPlayer() {
 function drawGoal() {
   let pos = hexToPixel(goalPos.q, goalPos.r);
   noStroke();
-  fill(255, 0, 0);
+  fill(0, 0, 0);
   ellipse(pos.x, pos.y, hexSize * 0.8);
 }
 
