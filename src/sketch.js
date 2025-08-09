@@ -1,6 +1,7 @@
 let hexSize = 40;
 let rows = 4;
 let cols = 5;
+let ball_size = 2;
 let grid = [];
 let playerPos;
 let goalPos;
@@ -8,7 +9,6 @@ let moveCount = 0;
 let swingCount = 0;
 let hoveredHex = null;
 
-let tileTypes = ["grass", "sand", "green"];
 let tileColors = {};
 
 function setup() {
@@ -128,9 +128,27 @@ function drawPlayer() {
   let pos = hexToPixel(playerPos.q, playerPos.r);
   noStroke();
 
-  // Base golf ball color (light blue)
-  fill(240, 240, 240);
-  ellipse(pos.x, pos.y, hexSize * 0.8);
+  let size = hexSize * 0.6;
+  let pxSize = size / 5; // size of each pixel "block"
+
+  // Draw blue square base for the ball
+  fill(240);
+  rectMode(CENTER);
+
+  for (let y = -ball_size; y <= ball_size; y++) {
+    for (let x = -ball_size; x <= ball_size; x++) {
+      // don't draw outside corners to make it ball shaped
+      if (Math.abs(x) === ball_size && Math.abs(y) === ball_size) {
+      } else {
+        rect(
+          pos.x + x * pxSize,
+          pos.y + y * pxSize,
+          pxSize * 0.9,
+          pxSize * 0.9
+        );
+      }
+    }
+  }
 }
 
 function drawGoal() {
