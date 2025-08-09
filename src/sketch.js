@@ -131,7 +131,6 @@ function drawPlayer() {
   let size = hexSize * 0.6;
   let pxSize = size / 5; // size of each pixel "block"
 
-  // Draw blue square base for the ball
   fill(240);
   rectMode(CENTER);
 
