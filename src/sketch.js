@@ -1,20 +1,34 @@
+// === SETTINGS ===
 let hexSize = 40;
 let rows = 4;
-let cols = 5;
+let cols = 6;
 let ball_size = 2;
+let pixelSize = 4;
+
 let grid = [];
 let playerPos;
 let goalPos;
 let moveCount = 0;
 let swingCount = 0;
 let hoveredHex = null;
-
 let tileColors = {};
+
+// === CARD SYSTEM ===
+let deck = [];
+let discardPile = [];
+let hand = [];
+let clubs = [
+  { name: "Driver", min: 4, max: 6, color: "#FFD700" },
+  { name: "Iron", min: 2, max: 4, color: "#C0C0C0" },
+  { name: "Wedge", min: 1, max: 2, color: "#8B4513" },
+  { name: "Putter", min: 1, max: 1, color: "#228B22" },
+];
+let selectedCardIndex = null;
 
 function setup() {
   createCanvas(800, 600);
+  noSmooth(); // for crisp pixel art
 
-  // Define colours for tile types
   tileColors = {
     grass: color("#00C800"),
     sand: color("#E6C864"),
@@ -23,27 +37,22 @@ function setup() {
 
   noiseSeed(floor(random(10000)));
   createHexGrid();
+  enforceTileMinimums();
   pickStartAndGoal();
-  rollMove();
+  initDeck();
+  drawCards(3);
 }
 
 function draw() {
-  background(220);
-
+  background(0);
   hoveredHex = pixelToHex(mouseX - width / 2, mouseY - height / 2);
-
   drawGrid();
   drawPlayer();
   drawGoal();
-
-  // UI
-  fill(0);
-  textSize(18);
-  textAlign(LEFT, TOP);
-  text("Hit Distance: " + moveCount, 10, 10);
-  text("Swings Taken: " + swingCount, 10, 30);
+  drawUI();
 }
 
+// === GRID GENERATION ===
 function createHexGrid() {
   grid = [];
   for (let q = -cols; q <= cols; q++) {
@@ -62,184 +71,24 @@ function createHexGrid() {
       }
     }
   }
+}
 
-  // Count current tiles of each type
-  let grassTiles = grid.filter((c) => c.type === "grass");
-  let sandTiles = grid.filter((c) => c.type === "sand");
-  let greenTiles = grid.filter((c) => c.type === "green");
-
-  // Helper to set tile type on a random tile not already that type
+function enforceTileMinimums() {
+  function countType(type) {
+    return grid.filter((c) => c.type === type).length;
+  }
   function forceTileType(tileType) {
     let candidates = grid.filter((c) => c.type !== tileType);
-    if (candidates.length === 0) return;
-    let tile = random(candidates);
-    tile.type = tileType;
+    if (candidates.length) random(candidates).type = tileType;
   }
-
-  while (sandTiles.length < 10) {
-    forceTileType("sand");
-    sandTiles = grid.filter((c) => c.type === "sand");
-  }
-
-  while (greenTiles.length < 4) {
-    forceTileType("green");
-    greenTiles = grid.filter((c) => c.type === "green");
-  }
-
-  // Grass is the default, so no minimum needed; still ensure at least 1 grass tile
-  if (grassTiles.length === 0) {
-    forceTileType("grass");
-  }
-}
-
-function drawGrid() {
-  stroke(150);
-  for (let cell of grid) {
-    let pos = hexToPixel(cell.q, cell.r);
-    let isHover = dist(mouseX, mouseY, pos.x, pos.y) < hexSize * 0.8;
-
-    let fillCol = tileColors[cell.type];
-    if (isHover) {
-      fillCol = lerpColor(color(fillCol), color(255), 0.3);
-    }
-    fill(fillCol);
-    drawHex(pos.x, pos.y);
-  }
-}
-
-function drawHex(x, y) {
-  beginShape();
-  for (let i = 0; i < 6; i++) {
-    let angle = (PI / 3) * i + PI / 6;
-    let vx = x + cos(angle) * hexSize;
-    let vy = y + sin(angle) * hexSize;
-    vertex(vx, vy);
-  }
-  endShape(CLOSE);
-}
-
-function hexToPixel(q, r) {
-  let x = hexSize * (sqrt(3) * q + (sqrt(3) / 2) * r);
-  let y = hexSize * ((3 / 2) * r);
-  return { x: width / 2 + x, y: height / 2 + y };
-}
-
-function drawPlayer() {
-  let pos = hexToPixel(playerPos.q, playerPos.r);
-  noStroke();
-
-  let size = hexSize * 0.6;
-  let pxSize = size / 5; // size of each pixel "block"
-
-  fill(240);
-  rectMode(CENTER);
-
-  for (let y = -ball_size; y <= ball_size; y++) {
-    for (let x = -ball_size; x <= ball_size; x++) {
-      // don't draw outside corners to make it ball shaped
-      if (Math.abs(x) === ball_size && Math.abs(y) === ball_size) {
-      } else {
-        rect(
-          pos.x + x * pxSize,
-          pos.y + y * pxSize,
-          pxSize * 0.9,
-          pxSize * 0.9
-        );
-      }
-    }
-  }
-}
-
-function drawGoal() {
-  let pos = hexToPixel(goalPos.q, goalPos.r);
-  noStroke();
-  fill(0, 0, 0);
-  ellipse(pos.x, pos.y, hexSize * 0.8);
-}
-
-function mousePressed() {
-  let clicked = pixelToHex(mouseX - width / 2, mouseY - height / 2);
-  if (clicked) {
-    let dq = clicked.q - playerPos.q;
-    let dr = clicked.r - playerPos.r;
-    let dist = hexDistance(playerPos, clicked);
-
-    if (dist === moveCount && isStraightLine(dq, dr)) {
-      swingCount++;
-      playerPos = { q: clicked.q, r: clicked.r };
-      if (playerPos.q === goalPos.q && playerPos.r === goalPos.r) {
-        alert("You Win in " + swingCount + " swings!");
-        noLoop();
-      } else {
-        rollMove();
-      }
-    }
-  }
-}
-
-function pixelToHex(px, py) {
-  let q = ((sqrt(3) / 3) * px - (1 / 3) * py) / hexSize;
-  let r = ((2 / 3) * py) / hexSize;
-  let rounded = hexRound(q, r);
-
-  for (let cell of grid) {
-    if (cell.q === rounded.q && cell.r === rounded.r) {
-      return { q: rounded.q, r: rounded.r };
-    }
-  }
-  return null;
-}
-
-function hexRound(q, r) {
-  let s = -q - r;
-  let rq = round(q);
-  let rr = round(r);
-  let rs = round(s);
-
-  let qDiff = abs(rq - q);
-  let rDiff = abs(rr - r);
-  let sDiff = abs(rs - s);
-
-  if (qDiff > rDiff && qDiff > sDiff) {
-    rq = -rr - rs;
-  } else if (rDiff > sDiff) {
-    rr = -rq - rs;
-  }
-  return { q: rq, r: rr };
-}
-
-function hexDistance(a, b) {
-  return (abs(a.q - b.q) + abs(a.q + a.r - b.q - b.r) + abs(a.r - b.r)) / 2;
-}
-
-function isStraightLine(dq, dr) {
-  return dq === 0 || dr === 0 || dq + dr === 0;
-}
-
-function rollMove() {
-  // Find the tile type the player is standing on
-  let currentTile = grid.find(
-    (c) => c.q === playerPos.q && c.r === playerPos.r
-  );
-  if (!currentTile) {
-    moveCount = 1; // default fallback
-    return;
-  }
-
-  if (currentTile.type === "sand") {
-    moveCount = 1; // Sand → 1 tile
-  } else if (currentTile.type === "grass") {
-    moveCount = int(random(3, 7)); // Grass → 3 to 6 tiles
-  } else if (currentTile.type === "green") {
-    moveCount = int(random(1, 4)); // Putting green → 1 to 3 tiles
-  }
+  while (countType("sand") < 10) forceTileType("sand");
+  while (countType("green") < 4) forceTileType("green");
+  if (countType("grass") === 0) forceTileType("grass");
 }
 
 function pickStartAndGoal() {
-  // Ensure there is at least one putting green tile
   let greens = grid.filter((c) => c.type === "green");
-  if (greens.length === 0) {
-    // Force one random tile to be green
+  if (!greens.length) {
     let forcedTile = random(grid);
     forcedTile.type = "green";
     greens = [forcedTile];
@@ -248,27 +97,20 @@ function pickStartAndGoal() {
   let tries = 0;
   let valid = false;
   while (!valid && tries < 500) {
-    let s = random(grid); // Start anywhere
-    let g = random(greens); // Goal on putting green
-    if (s && g && hexDistance(s, g) > 3) {
-      // Ensure some distance between them
+    let s = random(grid);
+    let g = random(greens);
+    if (hexDistance(s, g) > 3) {
       playerPos = { q: s.q, r: s.r };
       goalPos = { q: g.q, r: g.r };
       valid = true;
     }
     tries++;
   }
-
-  // If we failed to find a valid pair after 500 tries, just pick the first options
   if (!valid) {
     playerPos = { q: grid[0].q, r: grid[0].r };
-    let g = greens[0];
-    goalPos = { q: g.q, r: g.r };
+    goalPos = { q: greens[0].q, r: greens[0].r };
   }
-
-  // Expand the putting green to be larger (4 hexes)
-  let goalTile = grid.find((c) => c.q === goalPos.q && c.r === goalPos.r);
-  if (goalTile) expandPuttingGreen(goalTile);
+  expandPuttingGreen(grid.find((c) => c.q === goalPos.q && c.r === goalPos.r));
 }
 
 function expandPuttingGreen(goal) {
@@ -276,20 +118,16 @@ function expandPuttingGreen(goal) {
   let toCheck = [goal];
   let count = 0;
 
-  while (toCheck.length > 0 && count < 4) {
+  while (toCheck.length && count < 4) {
     let current = toCheck.shift();
     let key = `${current.q},${current.r}`;
     if (greenSet.has(key)) continue;
     greenSet.add(key);
-
-    // Make this tile green
     current.type = "green";
     count++;
-
-    // Add neighbors that are grass or green for expansion
     for (let n of getNeighbors(current)) {
       if (
-        (n.type === "green" || n.type === "grass") &&
+        ["green", "grass"].includes(n.type) &&
         !greenSet.has(`${n.q},${n.r}`)
       ) {
         toCheck.push(n);
@@ -299,7 +137,7 @@ function expandPuttingGreen(goal) {
 }
 
 function getNeighbors(tile) {
-  let directions = [
+  let dirs = [
     { q: 1, r: 0 },
     { q: 1, r: -1 },
     { q: 0, r: -1 },
@@ -307,7 +145,233 @@ function getNeighbors(tile) {
     { q: -1, r: 1 },
     { q: 0, r: 1 },
   ];
-  return directions
+  return dirs
     .map((d) => grid.find((c) => c.q === tile.q + d.q && c.r === tile.r + d.r))
     .filter(Boolean);
+}
+
+// === DRAWING ===
+function drawGrid() {
+  for (let cell of grid) {
+    let pos = hexToPixel(cell.q, cell.r);
+    let fillCol = tileColors[cell.type];
+
+    // Highlight hovered hex
+    if (hoveredHex && hoveredHex.q === cell.q && hoveredHex.r === cell.r) {
+      fillCol = color(255, 255, 0);
+    }
+
+    drawHexPixel(pos.x, pos.y, fillCol);
+
+    //   // Eligible move dots
+    //   if (selectedCardIndex != null) {
+    //     let card = hand[selectedCardIndex];
+    //     let distHex = hexDistance(playerPos, cell);
+    //     if (distHex >= card.min && distHex <= card.max) {
+    //       fill(0, 0, 250);
+    //       noStroke();
+    //       ellipse(pos.x, pos.y, 6, 6);
+    //     }
+    //   }
+    // }
+
+    // Draw eligible move dot (small pixel square)
+    if (isEligibleMove(cell)) {
+      fill(0);
+      let pxSize = hexSize / 6;
+      rect(pos.x, pos.y, pxSize * 0.8, pxSize * 0.8);
+    }
+  }
+}
+
+function isStraightLine(dq, dr) {
+  return dq === 0 || dr === 0 || dq + dr === 0;
+}
+
+function isEligibleMove(cell) {
+  if (!playerPos || moveCount === 0) return false;
+  if (cell.q === playerPos.q && cell.r === playerPos.r) return false;
+  let dist = hexDistance(playerPos, cell);
+  if (!isStraightLine(cell.q - playerPos.q, cell.r - playerPos.r)) return false;
+  return dist === moveCount;
+}
+
+function drawHexPixel(cx, cy, col) {
+  let verts = [];
+  for (let i = 0; i < 6; i++) {
+    let angle = (PI / 3) * i + PI / 6;
+    verts.push([cx + cos(angle) * hexSize, cy + sin(angle) * hexSize]);
+  }
+  fill(col);
+  noStroke();
+  for (let x = cx - hexSize; x <= cx + hexSize; x += pixelSize) {
+    for (let y = cy - hexSize; y <= cy + hexSize; y += pixelSize) {
+      if (pointInPolygon(x, y, verts)) rect(x, y, pixelSize, pixelSize);
+    }
+  }
+}
+
+function pointInPolygon(px, py, verts) {
+  let inside = false;
+  for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+    let xi = verts[i][0],
+      yi = verts[i][1];
+    let xj = verts[j][0],
+      yj = verts[j][1];
+    let intersect =
+      yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function drawPlayer() {
+  let pos = hexToPixel(playerPos.q, playerPos.r);
+  fill(255);
+  for (let x = -ball_size; x <= ball_size; x++) {
+    for (let y = -ball_size; y <= ball_size; y++) {
+      if (dist(0, 0, x, y) <= ball_size) {
+        rect(
+          pos.x + x * pixelSize,
+          pos.y + y * pixelSize,
+          pixelSize,
+          pixelSize
+        );
+      }
+    }
+  }
+}
+
+function drawGoal() {
+  let pos = hexToPixel(goalPos.q, goalPos.r);
+  fill(0);
+  for (let x = -ball_size; x <= ball_size; x++) {
+    for (let y = -ball_size; y <= ball_size; y++) {
+      if (dist(0, 0, x, y) <= ball_size) {
+        rect(
+          pos.x + x * pixelSize,
+          pos.y + y * pixelSize,
+          pixelSize,
+          pixelSize
+        );
+      }
+    }
+  }
+}
+
+// === UI ===
+function drawUI() {
+  fill(255);
+  textAlign(LEFT, TOP);
+  text(`Swings: ${swingCount}`, 10, 10);
+  text(`Select a club`, 10, 30);
+  if (selectedCardIndex != null) {
+    let card = hand[selectedCardIndex];
+    text(`Swing Distance: ${card.min}-${card.max}`, 10, 50);
+  }
+
+  let cardX = 10;
+  for (let i = 0; i < hand.length; i++) {
+    let card = hand[i];
+    fill(card.color);
+    rect(cardX, height - 80, 60, 70);
+    fill(0);
+    textAlign(CENTER, CENTER);
+    text(card.name, cardX + 30, height - 65);
+    text(`${card.min}-${card.max}`, cardX + 30, height - 45);
+    if (selectedCardIndex === i) {
+      noFill();
+      stroke(255, 0, 0);
+      strokeWeight(3);
+      rect(cardX - 2, height - 82, 64, 74);
+      noStroke();
+    }
+    cardX += 70;
+  }
+}
+
+// === INTERACTION ===
+function mousePressed() {
+  // Card selection
+  let cardX = 10;
+  for (let i = 0; i < hand.length; i++) {
+    if (
+      mouseX > cardX &&
+      mouseX < cardX + 60 &&
+      mouseY > height - 80 &&
+      mouseY < height - 10
+    ) {
+      selectedCardIndex = i;
+      return;
+    }
+    cardX += 70;
+  }
+  // Movement if card selected
+  if (selectedCardIndex != null) {
+    let clicked = pixelToHex(mouseX - width / 2, mouseY - height / 2);
+    if (!clicked) return;
+    let card = hand[selectedCardIndex];
+    let distHex = hexDistance(playerPos, clicked);
+    if (distHex >= card.min && distHex <= card.max) {
+      playerPos = { q: clicked.q, r: clicked.r };
+      swingCount++;
+      discardPile.push(card);
+      hand.splice(selectedCardIndex, 1);
+      selectedCardIndex = null;
+      drawCards(1);
+      if (playerPos.q === goalPos.q && playerPos.r === goalPos.r)
+        alert("You win!");
+    }
+  }
+}
+
+// === CARDS ===
+function initDeck() {
+  deck = [];
+  for (let i = 0; i < 4; i++) deck.push(...clubs);
+  shuffle(deck, true);
+}
+
+function drawCards(n) {
+  for (let i = 0; i < n; i++) {
+    if (deck.length === 0) {
+      deck = shuffle(discardPile, true);
+      discardPile = [];
+    }
+    if (deck.length) hand.push(deck.pop());
+  }
+}
+
+// === HEX UTILS ===
+function hexToPixel(q, r) {
+  let x = hexSize * (sqrt(3) * q + (sqrt(3) / 2) * r);
+  let y = hexSize * ((3 / 2) * r);
+  return { x: width / 2 + x, y: height / 2 + y };
+}
+
+function pixelToHex(px, py) {
+  let q = ((sqrt(3) / 3) * px - (1 / 3) * py) / hexSize;
+  let r = ((2 / 3) * py) / hexSize;
+  let rounded = hexRound(q, r);
+  for (let cell of grid)
+    if (cell.q === rounded.q && cell.r === rounded.r)
+      return { q: rounded.q, r: rounded.r };
+  return null;
+}
+
+function hexRound(q, r) {
+  let s = -q - r;
+  let rq = round(q),
+    rr = round(r),
+    rs = round(s);
+  let qDiff = abs(rq - q),
+    rDiff = abs(rr - r),
+    sDiff = abs(rs - s);
+  if (qDiff > rDiff && qDiff > sDiff) rq = -rr - rs;
+  else if (rDiff > sDiff) rr = -rq - rs;
+  return { q: rq, r: rr };
+}
+
+function hexDistance(a, b) {
+  return (abs(a.q - b.q) + abs(a.q + a.r - b.q - b.r) + abs(a.r - b.r)) / 2;
 }
