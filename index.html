@@ -3,23 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <title>Hex Golf Game ⛳</title>
-    <style>
-      body {
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        height: 100vh;
-        margin: 0;
-        background: #f0f0f0;
-      }
-      canvas {
-        border: 2px solid #444;
-        background: white;
-      }
-    </style>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <div class="game-stats">
+      <span class="stat-label">Swings:</span>
+      <span class="stat-value" id="swings-count">0</span>
+    </div>
+
+    <div class="tile-info" id="tile-info"></div>
+    <div class="shot-preview" id="shot-preview"></div>
+
+    <div class="cards-container">
+      <div class="clubs" id="clubs-container">
+        <!-- Club cards will be generated here -->
+      </div>
+      <div class="modifiers" id="modifiers-container">
+        <!-- Modifier cards will be generated here -->
+      </div>
+    </div>
+
+    <button class="swing-button" id="swing-button" style="display: none">SWING!</button>
+
     <!-- p5.js library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
     <script src="src/sketch.js"></script>

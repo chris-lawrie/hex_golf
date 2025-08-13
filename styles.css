@@ -1,0 +1,198 @@
+/* Game UI Styles */
+:root {
+  --card-width: 80px;
+  --card-height: 100px;
+  --card-radius: 8px;
+  --card-spacing: 10px;
+  --ui-font: "Courier New", monospace;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #1a1a1a;
+  color: white;
+  font-family: var(--ui-font);
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+}
+
+/* Game Stats */
+.game-stats {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 15px;
+  border-radius: var(--card-radius);
+  font-size: 16px;
+  z-index: 100;
+}
+
+.stat-label {
+  color: #888;
+  margin-right: 8px;
+}
+
+.stat-value {
+  color: white;
+  font-weight: bold;
+}
+
+/* Cards Container */
+.cards-container {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px;
+  z-index: 100;
+}
+
+/* Club Cards */
+.clubs {
+  display: flex;
+  gap: var(--card-spacing);
+}
+
+.club-card {
+  width: var(--card-width);
+  height: var(--card-height);
+  background: rgba(0, 0, 0, 0.8);
+  border-radius: var(--card-radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.club-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+.club-card.selected {
+  border: 2px solid #ff4444;
+  transform: translateY(-5px);
+}
+
+.club-name {
+  font-size: 14px;
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.club-range {
+  font-size: 12px;
+  color: #888;
+}
+
+/* Modifier Cards */
+.modifiers {
+  display: flex;
+  gap: var(--card-spacing);
+}
+
+.modifier-card {
+  width: var(--card-width);
+  height: var(--card-height);
+  background: rgba(0, 0, 0, 0.8);
+  border-radius: var(--card-radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.modifier-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+.modifier-card.selected {
+  border: 2px solid #44ff44;
+  transform: translateY(-5px);
+}
+
+.modifier-name {
+  font-size: 14px;
+  font-weight: bold;
+  text-align: center;
+}
+
+/* Swing Button */
+.swing-button {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #44ff44;
+  color: black;
+  padding: 15px 30px;
+  border-radius: 25px;
+  font-size: 18px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  outline: none;
+  box-shadow: 0 4px 15px rgba(68, 255, 68, 0.3);
+}
+
+.swing-button:hover {
+  transform: translateX(-50%) scale(1.05);
+  box-shadow: 0 6px 20px rgba(68, 255, 68, 0.4);
+}
+
+.swing-button:active {
+  transform: translateX(-50%) scale(0.95);
+}
+
+/* Tile Info */
+.tile-info {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.7);
+  padding: 10px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  z-index: 100;
+}
+
+/* Shot Preview */
+.shot-preview {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.7);
+  padding: 10px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  z-index: 100;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.preview-label {
+  color: #888;
+}
+
+.preview-value {
+  color: #ff4444;
+  font-weight: bold;
+}
