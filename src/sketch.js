@@ -40,6 +40,16 @@ let eligibleTargets = []; // array of {q,r}
 let selectedDirection = null; // Index into HEX_DIRS (0-5) or null
 let targetPos = null; // The target position based on direction and distance
 
+// === Additional round/hole state ===
+let currentHole = 1;
+let totalHoles = 9;
+let totalStrokes = 0; // across round
+let parForHole = 4; // computed per hole
+let isAnimatingShot = false;
+let animStepsRemaining = 0;
+let animStepDir = { q: 0, r: 0 };
+let postShotToApply = null; // function or data to run after animation
+
 // club / modifier definitions (templates)
 const CLUB_TEMPLATES = [
   { name: "Driver", min: 4, max: 6, color: "#FFD700" },
@@ -77,6 +87,67 @@ let clubsContainer;
 let modifiersContainer;
 let swingButton;
 
+// DOM references (added earlier)
+let holeNumberElement;
+let holeTotalElement;
+let holeParElement;
+let totalStrokesElement;
+let nextHoleBtn;
+let restartRoundBtn;
+
+// Cached grid buffer to avoid redrawing tiles every frame
+let gridBuffer = null;
+
+function rebuildGridBuffer() {
+  gridBuffer = createGraphics(width, height);
+  gridBuffer.noSmooth();
+  gridBuffer.rectMode(CENTER);
+  gridBuffer.push();
+  gridBuffer.translate(width / 2, height / 2);
+  for (let cell of grid) {
+    let pos = hexToPixel(cell.q, cell.r);
+    let col = tileColors[cell.type];
+    drawHexPixelOn(gridBuffer, pos.x, pos.y, col);
+  }
+  gridBuffer.pop();
+}
+
+function drawHexPixelOn(pg, cx, cy, col) {
+  // draw pixel blocks inside polygon; fill with overlapping rects to avoid gaps
+  let verts = [];
+  for (let i = 0; i < 6; i++) {
+    let a = (PI / 3) * i + PI / 6;
+    verts.push([cx + cos(a) * hexSize, cy + sin(a) * hexSize]);
+  }
+
+  // Create lighter version of the tile color for the stroke
+  let lightCol = color(red(col), green(col), blue(col));
+  lightCol.setAlpha(alpha(col));
+  lightCol.setRed(red(col) + (255 - red(col)) * 0.25);
+  lightCol.setGreen(green(col) + (255 - green(col)) * 0.25);
+  lightCol.setBlue(blue(col) + (255 - blue(col)) * 0.25);
+
+  // Draw the tile fill
+  pg.fill(col);
+  pg.noStroke();
+  for (let x = cx - hexSize + 1; x <= cx + hexSize - 1; x += pixelSize - 0.2) {
+    for (let y = cy - hexSize + 1; y <= cy + hexSize - 1; y += pixelSize - 0.2) {
+      if (pointInPolygon(x, y, verts)) pg.rect(x, y, pixelSize + 0.4, pixelSize + 0.4);
+    }
+  }
+
+  // Draw the lighter stroke
+  pg.stroke(lightCol);
+  pg.strokeWeight(1);
+  pg.noFill();
+  pg.beginShape();
+  for (let i = 0; i < 6; i++) {
+    let a = (PI / 3) * i + PI / 6;
+    pg.vertex(cx + cos(a) * hexSize, cy + sin(a) * hexSize);
+  }
+  pg.endShape(CLOSE);
+}
+
 // --- p5.js setup ---
 function setup() {
   createCanvas(windowWidth, windowHeight);
@@ -91,6 +162,12 @@ function setup() {
   clubsContainer = document.getElementById("clubs-container");
   modifiersContainer = document.getElementById("modifiers-container");
   swingButton = document.getElementById("swing-button");
+  holeNumberElement = document.getElementById("hole-number");
+  holeTotalElement = document.getElementById("hole-total");
+  holeParElement = document.getElementById("hole-par");
+  totalStrokesElement = document.getElementById("total-strokes");
+  nextHoleBtn = document.getElementById("next-hole-btn");
+  restartRoundBtn = document.getElementById("restart-round-btn");
 
   // Calculate responsive hex size based on window dimensions
   hexSize = constrain(min(windowWidth, windowHeight) / 25, minHexSize, maxHexSize);
@@ -107,6 +184,8 @@ function setup() {
   createHexGrid();
   enforceTileMinimums();
   pickStartAndGoal();
+  parForHole = computePar();
+  rebuildGridBuffer();
 
   initDecks();
   drawToHand(3, hand_clubs, deck_clubs, discard_clubs);
@@ -115,11 +194,20 @@ function setup() {
   updateUI();
   recomputeSelection();
 
-  // Add swing button click handler
+  // DOM swing button handler
   swingButton.addEventListener("click", () => {
-    if (selectedDirection !== null && targetPos) {
+    if (selectedDirection !== null && selectedClubIndex !== null && !isAnimatingShot) {
       executeSwing();
     }
+  });
+  // Next hole / restart
+  nextHoleBtn.addEventListener("click", () => {
+    if (playerPos.q === goalPos.q && playerPos.r === goalPos.r) {
+      startNextHole();
+    }
+  });
+  restartRoundBtn.addEventListener("click", () => {
+    startRound();
   });
 }
 
@@ -127,18 +215,56 @@ function setup() {
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
   hexSize = constrain(min(windowWidth, windowHeight) / 25, minHexSize, maxHexSize);
+  rebuildGridBuffer();
   recomputeSelection();
 }
 
 function draw() {
   background(20);
   translate(width / 2, height / 2);
+  // Draw cached grid
+  if (gridBuffer) image(gridBuffer, -width / 2, -height / 2);
   hoveredHex = pixelToHex(mouseX - width / 2, mouseY - height / 2);
-  drawGrid();
+  // Overlay hover tile only
+  if (hoveredHex) {
+    let cell = getCell(hoveredHex.q, hoveredHex.r);
+    if (cell) {
+      let pos = hexToPixel(cell.q, cell.r);
+      let base = tileColors[cell.type];
+      let hoverCol = color(red(base), green(base), blue(base));
+      hoverCol.setAlpha(alpha(base));
+      hoverCol.setRed(red(base) + (255 - red(base)) * 0.55);
+      hoverCol.setGreen(green(base) + (255 - green(base)) * 0.55);
+      hoverCol.setBlue(blue(base) + (255 - blue(base)) * 0.55);
+      drawHexPixel(pos.x, pos.y, hoverCol);
+    }
+  }
+  // Direction and range overlays
+  drawDirectionAndRangeOverlays();
   drawPlayer();
   drawGoal();
-  translate(-width / 2, -height / 2); // Reset translation for UI
-  updateUI(); // Call updateUI here to draw the UI elements
+  processShotAnimation();
+  translate(-width / 2, -height / 2);
+  // Remove per-frame UI updates; UI updates happen on state changes
+}
+
+function processShotAnimation() {
+  if (!isAnimatingShot) return;
+  if (animStepsRemaining <= 0) {
+    // Apply any post-shot actions queued
+    if (typeof postShotToApply === "function") postShotToApply();
+    postShotToApply = null;
+    isAnimatingShot = false;
+    return;
+  }
+  let nextCell = getCell(playerPos.q + animStepDir.q, playerPos.r + animStepDir.r);
+  if (nextCell) {
+    playerPos = { q: nextCell.q, r: nextCell.r };
+    animStepsRemaining--;
+  } else {
+    // off-grid safety stop
+    animStepsRemaining = 0;
+  }
 }
 
 // ------------------ GRID GENERATION ------------------
@@ -210,6 +336,9 @@ function pickStartAndGoal() {
 
   // Create the putting green around the goal
   expandPuttingGreen(goalTile);
+
+  // After modifying tiles, rebuild buffer
+  rebuildGridBuffer();
 
   // Now pick a start position on grass, away from the goal
   tries = 0;
@@ -283,6 +412,9 @@ function expandPuttingGreen(goal) {
       greenSet.add(`${tile.q},${tile.r}`);
     }
   }
+
+  // After modifying tiles, rebuild buffer
+  rebuildGridBuffer();
 }
 
 function getNeighbors(tile) {
@@ -682,10 +814,23 @@ function drawGoal() {
 
 // ------------------ UI & INTERACTION ------------------
 function updateUI() {
-  // Update swings count
+  // Swings and tile info (existing section below)
   swingsCountElement.textContent = swingCount;
+  holeNumberElement.textContent = currentHole;
+  holeTotalElement.textContent = totalHoles;
+  holeParElement.textContent = parForHole;
+  totalStrokesElement.textContent = totalStrokes;
 
-  // Update tile info
+  // Score vs par
+  let holesCompleted = currentHole - (playerPos.q === goalPos.q && playerPos.r === goalPos.r ? 0 : 1);
+  let scoreElem = document.getElementById("score-vs-par");
+  if (scoreElem) {
+    // We don't track per-hole strokes historically here; show current hole delta as proxy
+    let delta = swingCount - parForHole;
+    scoreElem.textContent = delta === 0 ? "E" : delta > 0 ? `+${delta}` : `${delta}`;
+  }
+
+  // Tile info
   let tile = getCell(playerPos.q, playerPos.r);
   let info = tile
     ? `${tile.type.toUpperCase()} (${
@@ -702,7 +847,7 @@ function updateUI() {
     : "";
   tileInfoElement.textContent = info;
 
-  // Update shot preview
+  // Shot preview
   if (selectedClubIndex !== null) {
     let c = hand_clubs[selectedClubIndex];
     shotPreviewElement.innerHTML = `
@@ -716,7 +861,7 @@ function updateUI() {
     shotPreviewElement.style.display = "none";
   }
 
-  // Update club cards
+  // Cards
   clubsContainer.innerHTML = hand_clubs
     .map(
       (club, i) => `
@@ -728,8 +873,6 @@ function updateUI() {
   `
     )
     .join("");
-
-  // Update modifier cards
   modifiersContainer.innerHTML = hand_mods
     .map(
       (mod, i) => `
@@ -741,43 +884,36 @@ function updateUI() {
     )
     .join("");
 
-  // Update swing button visibility
-  swingButton.style.display = selectedDirection !== null ? "block" : "none";
-
-  // Add click handlers for cards
   Array.from(clubsContainer.children).forEach((card, i) => {
-    card.addEventListener("click", () => {
-      if (selectedClubIndex === i) {
-        selectedClubIndex = null;
-      } else {
-        selectedClubIndex = i;
-      }
+    card.onclick = () => {
+      if (isAnimatingShot) return;
+      selectedClubIndex = selectedClubIndex === i ? null : i;
       recomputeSelection();
       updateUI();
-    });
+    };
+  });
+  Array.from(modifiersContainer.children).forEach((card, i) => {
+    card.onclick = () => {
+      if (isAnimatingShot) return;
+      let idx = selectedModIndices.indexOf(i);
+      if (idx >= 0) selectedModIndices.splice(idx, 1);
+      else selectedModIndices.push(i);
+      recomputeSelection();
+      updateUI();
+    };
   });
 
-  Array.from(modifiersContainer.children).forEach((card, i) => {
-    card.addEventListener("click", () => {
-      let idx = selectedModIndices.indexOf(i);
-      if (idx >= 0) {
-        selectedModIndices.splice(idx, 1);
-      } else {
-        selectedModIndices.push(i);
-      }
-      recomputeSelection();
-      updateUI();
-    });
-  });
+  // Swing button enabled only when ready and not animating
+  let ready = selectedDirection !== null && selectedClubIndex !== null && !isAnimatingShot;
+  swingButton.disabled = !ready;
+  swingButton.title = ready ? "" : "Select a club and a direction";
+
+  // Next hole enabled only on hole complete
+  let holeComplete = playerPos.q === goalPos.q && playerPos.r === goalPos.r;
+  nextHoleBtn.disabled = !holeComplete || currentHole >= totalHoles;
 }
 
 function mousePressed() {
-  // First check if we're clicking the swing button
-  if (selectedDirection !== null && isSwingButtonClicked()) {
-    executeSwing();
-    return;
-  }
-
   // Handle club selection
   let startX = 10;
   for (let i = 0; i < hand_clubs.length; i++) {
@@ -814,52 +950,24 @@ function mousePressed() {
     }
   }
 
-  // Handle direction selection (now independent of club selection)
+  // Direction selection by angle (independent of club selection)
   let adjustedX = mouseX - width / 2;
   let adjustedY = mouseY - height / 2;
   let startPos = hexToPixel(playerPos.q, playerPos.r);
-
-  // Calculate angle to mouse position
   let angleToMouse = atan2(adjustedY - startPos.y, adjustedX - startPos.x);
-
-  // Find the closest direction
   let closestDir = 0;
   let closestAngleDiff = PI;
-
   for (let i = 0; i < HEX_DIRS.length; i++) {
-    let dir = HEX_DIRS[i];
-    let endPos = hexToPixel(playerPos.q + dir.q, playerPos.r + dir.r);
-
+    let endPos = hexToPixel(playerPos.q + HEX_DIRS[i].q, playerPos.r + HEX_DIRS[i].r);
     let angleToDir = atan2(endPos.y - startPos.y, endPos.x - startPos.x);
     let angleDiff = abs(((angleToMouse - angleToDir + PI) % (2 * PI)) - PI);
-
     if (angleDiff < closestAngleDiff) {
       closestAngleDiff = angleDiff;
       closestDir = i;
     }
   }
-
-  // Only select the direction if it's within a reasonable angle (30 degrees)
   if (closestAngleDiff < PI / 6) {
-    if (selectedDirection === closestDir) {
-      selectedDirection = null;
-      targetPos = null;
-    } else {
-      selectedDirection = closestDir;
-      // Only set targetPos if we have a club selected
-      if (selectedClubIndex !== null) {
-        let dir = HEX_DIRS[closestDir];
-        let targetQ = playerPos.q + dir.q * selectedMoveCount;
-        let targetR = playerPos.r + dir.r * selectedMoveCount;
-        let targetCell = getCell(targetQ, targetR);
-
-        if (targetCell && targetCell.type !== "tree") {
-          targetPos = { q: targetQ, r: targetR };
-        } else {
-          targetPos = null;
-        }
-      }
-    }
+    selectedDirection = selectedDirection === closestDir ? null : closestDir;
     updateUI();
   }
 }
@@ -988,33 +1096,29 @@ function isSwingButtonClicked() {
 }
 
 function executeSwing() {
-  if (selectedClubIndex === null || selectedDirection === null) return;
+  if (selectedClubIndex === null || selectedDirection === null || isAnimatingShot) return;
 
   let dir = HEX_DIRS[selectedDirection];
   let club = hand_clubs[selectedClubIndex];
 
-  // Calculate final range with all modifiers
-  let min = club.min;
-  let max = club.max;
-  let deltaMin = 0;
-  let deltaMax = 0;
-  let ignoreSand = false;
-  let ignoreWater = false;
-
-  // Apply current tile effects
+  // Range with modifiers (re-using recompute logic pattern)
+  let min = club.min,
+    max = club.max;
+  let deltaMin = 0,
+    deltaMax = 0;
+  let ignoreSand = false,
+    ignoreWater = false;
   let curCell = getCell(playerPos.q, playerPos.r);
   if (curCell && curCell.type === "green") min = 1;
-
-  // Apply modifier effects
   for (let mi of selectedModIndices) {
     let mod = hand_mods[mi];
     if (!mod) continue;
     if (mod.name === "Tailwind") {
       deltaMax += random([1, 2]);
     } else if (mod.name === "Headwind") {
-      let sub = random([1, 2]);
-      deltaMax -= sub;
-      deltaMin -= sub;
+      let s = random([1, 2]);
+      deltaMax -= s;
+      deltaMin -= s;
     } else if (mod.name === "Mega") {
       deltaMax += 2;
     } else if (mod.name === "Precision") {
@@ -1024,41 +1128,53 @@ function executeSwing() {
       ignoreWater = true;
     }
   }
-
-  // Apply terrain penalties
-  if (curCell && curCell.type === "sand" && !ignoreSand) {
-    deltaMax -= 1;
-  }
+  if (curCell && curCell.type === "sand" && !ignoreSand) deltaMax -= 1;
   if (curCell && curCell.type === "water" && !ignoreWater) {
     deltaMax -= 2;
     deltaMin = max(1, deltaMin - 1);
   }
-
   let finalMin = Math.max(1, Math.round(min + deltaMin));
   let finalMax = Math.max(finalMin, Math.round(max + deltaMax));
 
-  // Calculate actual move distance
   let moveDistance = Math.floor(random(finalMin, finalMax + 1));
+  let unit = { q: dir.q, r: dir.r };
 
-  // Calculate target position
-  let targetQ = playerPos.q + dir.q * moveDistance;
-  let targetR = playerPos.r + dir.r * moveDistance;
-  let targetCell = getCell(targetQ, targetR);
+  // Blocked by trees along the path?
+  let lastValid = { q: playerPos.q, r: playerPos.r };
+  let blocked = false;
+  for (let i = 1; i <= moveDistance; i++) {
+    let cq = playerPos.q + unit.q * i;
+    let cr = playerPos.r + unit.r * i;
+    let cell = getCell(cq, cr);
+    if (!cell || cell.type === "tree") {
+      blocked = true;
+      break;
+    }
+    lastValid = { q: cq, r: cr };
+  }
 
-  // Store previous position for potential water hazard
-  let prevPos = { ...playerPos };
+  let finalTarget = blocked
+    ? lastValid
+    : { q: playerPos.q + unit.q * moveDistance, r: playerPos.r + unit.r * moveDistance };
 
-  // Execute the move if target is valid
-  if (targetCell && targetCell.type !== "tree") {
-    playerPos = { q: targetQ, r: targetR };
+  // Setup animation
+  isAnimatingShot = true;
+  animStepsRemaining = hexDistance(playerPos, finalTarget);
+  animStepDir = unit;
 
-    // Handle water hazard effect
-    if (targetCell.type === "water" && !ignoreWater) {
-      playerPos = prevPos;
-      swingCount++; // Additional penalty stroke
+  let prevBeforeMove = { q: playerPos.q, r: playerPos.r };
+
+  // Queue post-shot handling to run when animation finishes
+  postShotToApply = () => {
+    // Water hazard: bounce back to prev if landed in water (unless Fireball)
+    let landed = getCell(playerPos.q, playerPos.r);
+    if (landed && landed.type === "water" && !ignoreWater) {
+      playerPos = prevBeforeMove;
+      swingCount++; // penalty stroke
+      totalStrokes++;
     }
 
-    // Apply post-shot modifiers
+    // Apply POST mods
     for (let mi of selectedModIndices) {
       let mod = hand_mods[mi];
       if (!mod) continue;
@@ -1067,9 +1183,8 @@ function executeSwing() {
         let windDir = random(HEX_DIRS);
         for (let s = 0; s < steps; s++) {
           let nxt = getCell(playerPos.q + windDir.q, playerPos.r + windDir.r);
-          if (nxt && nxt.type !== "tree") {
-            playerPos = { q: nxt.q, r: nxt.r };
-          } else break;
+          if (nxt && nxt.type !== "tree") playerPos = { q: nxt.q, r: nxt.r };
+          else break;
         }
       } else if (mod.name === "Portal") {
         let greens = grid.filter((c) => c.type === "green");
@@ -1080,49 +1195,146 @@ function executeSwing() {
       } else if (mod.name === "Chip") {
         if (hexDistance(playerPos, goalPos) <= 2) {
           let goalCell = getCell(goalPos.q, goalPos.r);
-          if (goalCell && goalCell.type !== "tree") {
-            playerPos = { q: goalPos.q, r: goalPos.r };
-          }
+          if (goalCell && goalCell.type !== "tree") playerPos = { q: goalPos.q, r: goalPos.r };
         }
       }
     }
 
-    // Discard used cards
+    // Discard consumed cards
     let clubCard = hand_clubs[selectedClubIndex];
     if (clubCard) discard_clubs.push(clubCard);
-
     let modsToDiscard = [];
     for (let mi of selectedModIndices) {
-      let modCard = hand_mods[mi];
-      if (modCard) modsToDiscard.push(modCard);
+      let m = hand_mods[mi];
+      if (m) modsToDiscard.push(m);
     }
     for (let m of modsToDiscard) discard_mods.push(m);
-
-    // Remove cards from hand (larger indices first)
     selectedModIndices.sort((a, b) => b - a);
     for (let mi of selectedModIndices) hand_mods.splice(mi, 1);
     hand_clubs.splice(selectedClubIndex, 1);
 
-    // Draw replacement cards
+    // Draw replacements
     drawToHand(1, hand_clubs, deck_clubs, discard_clubs);
     drawToHand(modsToDiscard.length || 1, hand_mods, deck_mods, discard_mods);
 
-    // Reset selection state
+    // Reset selection (direction persists could be confusing, so clear it)
     selectedClubIndex = null;
     selectedDirection = null;
-    selectedModIndices = [];
+    selectedMoveCount = 0;
+    eligibleTargets = [];
     targetPos = null;
 
-    // Increment swing count and update UI
+    // Increment strokes
     swingCount++;
-    updateUI();
+    totalStrokes++;
 
-    // Check for win
+    // Win check
     if (playerPos.q === goalPos.q && playerPos.r === goalPos.r) {
-      setTimeout(() => alert(`You win in ${swingCount} swings!`), 50);
-      noLoop();
+      // Enable next hole button via updateUI
+    }
+
+    recomputeSelection();
+    updateUI();
+  };
+}
+
+// Compute a simple par based on distance and hazards
+function computePar() {
+  let d = hexDistance(playerPos, goalPos);
+  // Estimate hazards between by sampling along a median direction
+  let hazardBonus = 0;
+  for (let cell of grid) {
+    // lightweight proxy: more water/trees -> higher par
+    if (cell.type === "water" || cell.type === "tree") hazardBonus += 0.002;
+  }
+  let est = Math.round(constrain(d + 1 + hazardBonus * 10, 3, 6));
+  return est;
+}
+
+// Start next hole
+function startNextHole() {
+  currentHole = min(totalHoles, currentHole + 1);
+  // Reset hole state
+  swingCount = 0;
+  selectedClubIndex = null;
+  selectedModIndices = [];
+  selectedMoveCount = 0;
+  selectedDirection = null;
+  targetPos = null;
+  eligibleTargets = [];
+
+  // Regenerate course
+  noiseSeed(floor(random(10000)));
+  createHexGrid();
+  enforceTileMinimums();
+  pickStartAndGoal();
+  parForHole = computePar();
+  rebuildGridBuffer();
+
+  // Refill hands up to 3 each
+  while (hand_clubs.length < 3) drawToHand(1, hand_clubs, deck_clubs, discard_clubs);
+  while (hand_mods.length < 3) drawToHand(1, hand_mods, deck_mods, discard_mods);
+
+  recomputeSelection();
+  updateUI();
+}
+
+// Restart whole round
+function startRound() {
+  currentHole = 1;
+  totalStrokes = 0;
+  swingCount = 0;
+  selectedClubIndex = null;
+  selectedModIndices = [];
+  selectedMoveCount = 0;
+  selectedDirection = null;
+  targetPos = null;
+  eligibleTargets = [];
+
+  initDecks();
+  drawToHand(3, hand_clubs, deck_clubs, discard_clubs);
+  drawToHand(3, hand_mods, deck_mods, discard_mods);
+
+  noiseSeed(floor(random(10000)));
+  createHexGrid();
+  enforceTileMinimums();
+  pickStartAndGoal();
+  parForHole = computePar();
+  rebuildGridBuffer();
+
+  recomputeSelection();
+  updateUI();
+}
+
+// Keyboard controls
+function keyPressed() {
+  if (isAnimatingShot) return;
+  // Clubs 1-9
+  if (key >= "1" && key <= "9") {
+    let idx = parseInt(key) - 1;
+    if (idx < hand_clubs.length) {
+      selectedClubIndex = idx === selectedClubIndex ? null : idx;
+      recomputeSelection();
+      updateUI();
     }
   }
+  // Rotate direction Q/E or A/D
+  if (key === "q" || key === "Q" || key === "a" || key === "A") {
+    if (selectedDirection == null) selectedDirection = 0;
+    else selectedDirection = (selectedDirection + 5) % 6;
+    updateUI();
+  }
+  if (key === "e" || key === "E" || key === "d" || key === "D") {
+    if (selectedDirection == null) selectedDirection = 0;
+    else selectedDirection = (selectedDirection + 1) % 6;
+    updateUI();
+  }
+  // Space to swing
+  if (keyCode === 32) {
+    if (selectedClubIndex !== null && selectedDirection !== null) executeSwing();
+  }
+  // R to restart hole/round
+  if (key === "r" || key === "R") startRound();
 }
 
 // Update drawUI to properly handle swing button
@@ -1147,6 +1359,106 @@ function drawUI() {
   }
 
   // ... rest of existing UI code ...
+}
+
+function drawDirectionAndRangeOverlays() {
+  // Extracted from drawGrid arrows/range section
+  let startPos = hexToPixel(playerPos.q, playerPos.r);
+  for (let i = 0; i < HEX_DIRS.length; i++) {
+    let dir = HEX_DIRS[i];
+    let endPos = hexToPixel(playerPos.q + dir.q, playerPos.r + dir.r);
+    let isSelected = selectedDirection === i;
+    let isHovered = false;
+    if (hoveredHex) {
+      let mousePos = hexToPixel(hoveredHex.q, hoveredHex.r);
+      let angleToMouse = atan2(mousePos.y - startPos.y, mousePos.x - startPos.x);
+      let angleToDir = atan2(endPos.y - startPos.y, endPos.x - startPos.x);
+      let angleDiff = abs(((angleToMouse - angleToDir + PI) % (2 * PI)) - PI);
+      isHovered = angleDiff < PI / 6;
+    }
+    if (isSelected) {
+      stroke(255, 0, 0);
+      strokeWeight(3);
+    } else if (isHovered) {
+      stroke(255, 0, 0, 150);
+      strokeWeight(2);
+    } else {
+      stroke(255, 255, 255, 50);
+      strokeWeight(1);
+    }
+    line(startPos.x, startPos.y, endPos.x, endPos.y);
+    let angle = atan2(endPos.y - startPos.y, endPos.x - startPos.x);
+    let arrowSize = 10,
+      arrowAngle = PI / 6;
+    let tipX = endPos.x - arrowSize * cos(angle);
+    let tipY = endPos.y - arrowSize * sin(angle);
+    line(endPos.x, endPos.y, tipX - arrowSize * cos(angle - arrowAngle), tipY - arrowSize * sin(angle - arrowAngle));
+    line(endPos.x, endPos.y, tipX - arrowSize * cos(angle + arrowAngle), tipY - arrowSize * sin(angle + arrowAngle));
+  }
+  if (selectedClubIndex !== null) {
+    // Range preview (reuse logic from previous drawGrid)
+    let club = hand_clubs[selectedClubIndex];
+    let min = club.min,
+      max = club.max;
+    let deltaMin = 0,
+      deltaMax = 0;
+    let ignoreSand = false,
+      ignoreWater = false;
+    for (let mi of selectedModIndices) {
+      let mod = hand_mods[mi];
+      if (!mod) continue;
+      if (mod.name === "Tailwind") deltaMax += random([1, 2]);
+      else if (mod.name === "Headwind") {
+        let sub = random([1, 2]);
+        deltaMax -= sub;
+        deltaMin -= sub;
+      } else if (mod.name === "Mega") deltaMax += 2;
+      else if (mod.name === "Precision") min = 1;
+      else if (mod.name === "Fireball") {
+        ignoreSand = true;
+        ignoreWater = true;
+      }
+    }
+    let curCell = getCell(playerPos.q, playerPos.r);
+    if (curCell && curCell.type === "green") min = 1;
+    if (curCell && curCell.type === "sand" && !ignoreSand) deltaMax -= 1;
+    if (curCell && curCell.type === "water" && !ignoreWater) {
+      deltaMax -= 2;
+      deltaMin = max(1, deltaMin - 1);
+    }
+    let finalMin = Math.max(1, Math.round(min + deltaMin));
+    let finalMax = Math.max(finalMin, Math.round(max + deltaMax));
+    if (selectedDirection !== null) {
+      let dir = HEX_DIRS[selectedDirection];
+      noStroke();
+      for (let dist = finalMin; dist <= finalMax; dist++) {
+        let targetQ = playerPos.q + dir.q * dist;
+        let targetR = playerPos.r + dir.r * dist;
+        let targetCell = getCell(targetQ, targetR);
+        if (targetCell && targetCell.type !== "tree") {
+          let pos = hexToPixel(targetQ, targetR);
+          fill(255, 0, 0, 50);
+          let dotSize = pixelSize * 2;
+          circle(pos.x, pos.y, dotSize * 2);
+        }
+      }
+    } else {
+      noStroke();
+      for (let dir of HEX_DIRS) {
+        for (let dist = finalMin; dist <= finalMax; dist++) {
+          let targetQ = playerPos.q + dir.q * dist;
+          let targetR = playerPos.r + dir.r * dist;
+          let targetCell = getCell(targetQ, targetR);
+          if (targetCell && targetCell.type !== "tree") {
+            let pos = hexToPixel(targetQ, targetR);
+            fill(255, 255, 255, 15);
+            let dotSize = pixelSize * 2;
+            circle(pos.x, pos.y, dotSize * 2);
+          }
+        }
+      }
+    }
+  }
 }
 
 // We'll intercept mousePressed again to use performShot correctly — fix above

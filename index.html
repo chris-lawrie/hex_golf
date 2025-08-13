@@ -7,23 +7,33 @@
   </head>
   <body>
     <div class="game-stats">
-      <span class="stat-label">Swings:</span>
-      <span class="stat-value" id="swings-count">0</span>
+      <div>
+        <span class="stat-label">Hole:</span> <span class="stat-value" id="hole-number">1</span>/<span
+          class="stat-value"
+          id="hole-total"
+          >9</span
+        >
+      </div>
+      <div><span class="stat-label">Par:</span> <span class="stat-value" id="hole-par">4</span></div>
+      <div><span class="stat-label">Strokes (hole):</span> <span class="stat-value" id="swings-count">0</span></div>
+      <div><span class="stat-label">Total strokes:</span> <span class="stat-value" id="total-strokes">0</span></div>
+      <div><span class="stat-label">Score:</span> <span class="stat-value" id="score-vs-par">E</span></div>
     </div>
 
     <div class="tile-info" id="tile-info"></div>
     <div class="shot-preview" id="shot-preview"></div>
 
     <div class="cards-container">
-      <div class="clubs" id="clubs-container">
-        <!-- Club cards will be generated here -->
-      </div>
-      <div class="modifiers" id="modifiers-container">
-        <!-- Modifier cards will be generated here -->
-      </div>
+      <div class="clubs" id="clubs-container"></div>
+      <div class="modifiers" id="modifiers-container"></div>
     </div>
 
-    <button class="swing-button" id="swing-button" style="display: none">SWING!</button>
+    <button class="swing-button" id="swing-button" disabled title="Select a club and direction">SWING!</button>
+
+    <div class="controls">
+      <button class="control-button" id="next-hole-btn" disabled>Next Hole</button>
+      <button class="control-button" id="restart-round-btn">Restart Round</button>
+    </div>
 
     <!-- p5.js library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
